@@ -53,6 +53,7 @@ library(dplyr)
 library(ggplot2)
 library(reshape2)
 library(bayesplot)
+library(mcmcplots)
 ```
 
 
@@ -105,7 +106,7 @@ jags<-jags.model(model.spec, data = list('x1'=x1,
                                          `y`=y), quiet = T)
 
 ## Draw samples from 
-samples<-coda.samples(jags, variable.names = c("a", "beta"), 
+samples.coef<-coda.samples(jags, variable.names = c("a", "beta"), 
                       n.iter=1000,
                       nchain=4)
 ```
@@ -116,7 +117,7 @@ Once the samples are drawn, we can look at them to inspect convergence, find poi
 
 
 ```{r}
-plot(samples)
+plot(samples.coef)
 ```
 
 Trace plots -- those hairy caterpillars on the left -- shows the path of MCMC samples. Density plots on the right show the approximation of posterior densities of the coefficients. 
@@ -152,7 +153,17 @@ yrep <- matrix(samples$mu, ncol = length(y))
 ppc_dens_overlay(y, yrep[1:500,])
 ```
 
-### 2.4 How Non-convergence Might Look Like
+### 2.4 Showing Coefficient Plot
+
+```{r fig.asp=0.5}
+library(mcmcplots)
+caterplot(samples.coef, reorder = F)
+```
+
+
+
+
+### 2.5 How Non-convergence Might Look Like
 For a contrast, let's inspect how non-convergence looks like. We will make a slight change to the code above to make the model non-identifiable from the data: we will add a second constant.
 
 ```{r}
@@ -229,7 +240,7 @@ code<-"
 }"
 ```
 
-And let's compile it, sample from the posterior distributions of the parameters, and plot hthe samples.
+And let's compile it, sample from the posterior distributions of the parameters, and plot the samples.
 ```{r warning=FALSE, message=FALSE}
 model.spec<-textConnection(code)
 jags<-jags.model(model.spec, data = list('y'=y, 
@@ -241,4 +252,56 @@ samples<-coda.samples(jags, variable.names = c("a","beta"), n.iter=1000)
 plot(samples)
 ```
 
+### 3.2 Predicted Probabilities
 
+Defining a model with predicted probabilities.
+
+```{r}
+code<-"
+  model{
+    for (i in 1:N){
+      y[i] ~ dbern(p[i])
+      probit(p[i]) <-a+beta[1]*x1[i]+beta[2]*x2[i]
+    }
+    a ~ dnorm(0,0.001)
+    for (i in 1:2){
+      beta[i] ~ dnorm(0,0.001)
+    }
+  
+    p1<-phi(a+beta[1]*lowx1+beta[2]*medx2)
+    p2<-phi(a+beta[1]*highx1+beta[2]*medx2)
+}"
+
+```
+
+Sampling from predicted probabilities:
+
+```{r warning=FALSE, message=FALSE, fig.asp=0.5}
+lowx1<-sort(x1)[25]
+highx1<-sort(x1)[75]
+medx2<-median(x2)
+
+
+model.spec<-textConnection(code)
+
+jags<-jags.model(model.spec, data = list('y'=y, 
+                                          'x1'=x1, 
+                                          'x2'=x2,
+                                          'lowx1'=lowx1,
+                                          'highx1'= highx1,
+                                          'medx2'=medx2,
+                                          'N'=N), quiet = TRUE)
+
+samples<-coda.samples(jags, variable.names = c("p1","p2" ), n.iter=1000)
+
+sum.data<-summary(samples)$statistics[1:4]
+ps<-round(sum.data[1:2],2)
+cis<-2*sum.data[3:4]
+ns<-c("Low X1", "High X1")
+sum.dta<-data.frame(cbind(ns,as.numeric(ps),as.numeric(cis)))
+
+ggplot(sum.dta, aes(x=ns, y=ps)) +
+  geom_errorbar(width=.05, aes(ymin=ps-cis, ymax=ps+cis))+
+  geom_point(shape=21, size=3, fill="white") + theme_bw()+
+  labs(x = "Values of X1", y="Predicted Probability")
+```
